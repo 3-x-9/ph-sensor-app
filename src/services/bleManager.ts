@@ -1,5 +1,6 @@
 import { useEffect, useState, forwardRef, useImperativeHandle } from 'react';
 import { BleManager } from 'react-native-ble-plx';
+import { Buffer } from 'buffer';
 
 type BleRecieverProps = {
     onDeviceUpdate: (devices: DeviceInfo[]) => void;
@@ -47,6 +48,7 @@ const BleReceiver = forwardRef<BleRecieverRef, BleRecieverProps>(({ onDeviceUpda
 
     useImperativeHandle(ref, () => ({
         handleConnect,
+        handleDisconnect,
         sendCalibration,
         getActiveDevice,
     }));
@@ -71,8 +73,20 @@ const BleReceiver = forwardRef<BleRecieverRef, BleRecieverProps>(({ onDeviceUpda
         const device = devices.find(d => d.id === deviceId);
         if (!device || !bleManager) return;
         console.log("device", device);
+        bleManager.stopDeviceScan();
         connectToDevice(device);
         setActiveDevice(device);
+    };
+
+    const handleDisconnect = async (deviceId: string) => {
+        if (!bleManager) return;
+        try {
+            await bleManager.cancelDeviceConnection(deviceId);
+            console.log(`disconnecting from ${deviceId}`);
+            setDevices(prev => prev.map(d => d.id === deviceId ? {...d, connected: false} : d));
+        } catch (e) {
+            console.warn("Disconnection error: ", e)
+        }
     };
 
     const sendCalibration = async (deviceId: string, calibrationData: { m: number, b: number }) => {
@@ -93,6 +107,14 @@ const BleReceiver = forwardRef<BleRecieverRef, BleRecieverProps>(({ onDeviceUpda
         } catch (e) {
             console.warn(e);
         }
+    };
+
+    const base64ToFloatLE = (base64?: string | null) => {
+        if (!base64) return 0;
+        const buffer = Buffer.from(base64, "base64");
+        if (buffer.length < 4) return 0;
+        const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+        return view.getFloat32(0, true);
     };
 
     const connectToDevice = async (deviceInfo: DeviceInfo) => {
@@ -120,14 +142,13 @@ const BleReceiver = forwardRef<BleRecieverRef, BleRecieverProps>(({ onDeviceUpda
                 (error, characteristic) => {
                     if (error) return console.warn(error);
 
-                    const decodedValue = Buffer.from(characteristic.value, 'base64').toString("utf-8");
+                    const decodedValue = base64ToFloatLE(characteristic!.value!);
+                    console.log("recieved data:", decodedValue)
                     setDevices(prev => prev.map(d =>
-                        d.id === deviceInfo.id ? { ...d, value: decodedValue } : d
+                        d.id === deviceInfo.id ? { ...d, value: decodedValue.toFixed(2) } : d
                     ));
                 }
             );
-
-
         } catch (error) {
             console.warn('Connection error:', error);
         }
